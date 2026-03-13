@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="Тренируйте слух и точность интонации с интерактивными упражнениями по распознаванию нот.">
+  <meta name="theme-color" content="#0a0a1a">
+  <title>Тренажёр нот — Слух и интонация</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+  <!-- ════════ Главный экран ════════ -->
+  <section id="landing" class="screen active">
+    <div class="landing-content">
+      <h1 class="logo">🎵 <span>Тренажёр нот</span></h1>
+      <p class="tagline">Развивай слух. Совершенствуй интонацию.</p>
+
+      <div class="mode-cards">
+        <button class="mode-card" id="btn-mode-sing" aria-label="Режим «Спой ноту»">
+          <div class="mode-icon">🎤</div>
+          <h2>Спой ноту</h2>
+          <p>Увидь ноту, спой её и получи мгновенную оценку точности интонации.</p>
+        </button>
+
+        <button class="mode-card" id="btn-mode-identify" aria-label="Режим «Угадай ноту»">
+          <div class="mode-icon">🎧</div>
+          <h2>Угадай ноту</h2>
+          <p>Послушай ноту и выбери правильный ответ. Собирай серию верных ответов!</p>
+        </button>
+
+        <button class="mode-card" id="btn-mode-staff" aria-label="Режим «Чтение нот»">
+          <div class="mode-icon">🎼</div>
+          <h2>Чтение нот</h2>
+          <p>Нота показана на нотном стане — определи, как она называется!</p>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Режим 1: Спой ноту ════════ -->
+  <section id="sing-mode" class="screen">
+    <header class="mode-header">
+      <button class="back-btn" id="sing-back" aria-label="Назад в меню">← Назад</button>
+      <h2>Спой ноту</h2>
+      <div class="header-spacer"></div>
+    </header>
+
+    <div class="sing-content">
+      <div class="target-note-container">
+        <span class="label">Спой эту ноту</span>
+        <div class="target-note" id="sing-target">До4</div>
+        <button class="play-ref-btn" id="sing-play-ref" aria-label="Воспроизвести ноту">
+          🔊 Послушать
+        </button>
+      </div>
+
+      <div class="pitch-meter" id="pitch-meter">
+        <div class="meter-labels">
+          <span>♭ Низко</span>
+          <span>✓ Точно</span>
+          <span>♯ Высоко</span>
+        </div>
+        <div class="meter-track">
+          <div class="meter-center"></div>
+          <div class="meter-needle" id="meter-needle"></div>
+        </div>
+        <div class="detected-info">
+          <span id="detected-note">—</span>
+          <span id="detected-cents">—</span>
+        </div>
+      </div>
+
+      <button class="action-btn" id="sing-start-btn">
+        <span class="btn-icon">🎤</span>
+        <span class="btn-label">Начать запись</span>
+      </button>
+
+      <div class="sing-feedback hidden" id="sing-feedback">
+        <div class="feedback-icon" id="sing-feedback-icon"></div>
+        <div class="feedback-text" id="sing-feedback-text"></div>
+        <button class="next-btn" id="sing-next-btn">Следующая нота →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Режим 2: Угадай ноту ════════ -->
+  <section id="identify-mode" class="screen">
+    <header class="mode-header">
+      <button class="back-btn" id="identify-back" aria-label="Назад в меню">← Назад</button>
+      <h2>Угадай ноту</h2>
+      <div class="score-display">
+        🔥 <span id="streak">0</span>
+      </div>
+    </header>
+
+    <div class="identify-content">
+      <div class="play-container">
+        <button class="play-btn" id="identify-play-btn" aria-label="Воспроизвести ноту">
+          <span class="play-ring"></span>
+          <span class="play-icon">▶</span>
+        </button>
+        <p class="play-hint" id="play-hint">Нажми, чтобы услышать ноту</p>
+      </div>
+
+      <div class="note-grid" id="note-grid">
+        <button class="note-btn" data-note="C">До</button>
+        <button class="note-btn" data-note="C#">До♯</button>
+        <button class="note-btn" data-note="D">Ре</button>
+        <button class="note-btn" data-note="D#">Ре♯</button>
+        <button class="note-btn" data-note="E">Ми</button>
+        <button class="note-btn" data-note="F">Фа</button>
+        <button class="note-btn" data-note="F#">Фа♯</button>
+        <button class="note-btn" data-note="G">Соль</button>
+        <button class="note-btn" data-note="G#">Соль♯</button>
+        <button class="note-btn" data-note="A">Ля</button>
+        <button class="note-btn" data-note="A#">Ля♯</button>
+        <button class="note-btn" data-note="B">Си</button>
+      </div>
+
+      <div class="identify-feedback hidden" id="identify-feedback">
+        <div class="feedback-icon" id="identify-feedback-icon"></div>
+        <div class="feedback-text" id="identify-feedback-text"></div>
+        <button class="next-btn" id="identify-next-btn">Следующая нота →</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════ Режим 3: Чтение нот ════════ -->
+  <section id="staff-mode" class="screen">
+    <header class="mode-header">
+      <button class="back-btn" id="staff-back" aria-label="Назад в меню">← Назад</button>
+      <h2>Чтение нот</h2>
+      <div class="score-display">
+        🔥 <span id="staff-streak">0</span>
+      </div>
+    </header>
+
+    <div class="staff-content">
+      <div class="staff-canvas-container">
+        <canvas id="staff-canvas" width="360" height="200"></canvas>
+      </div>
+
+      <div class="note-grid" id="staff-note-grid">
+        <button class="note-btn" data-note="C">До</button>
+        <button class="note-btn" data-note="D">Ре</button>
+        <button class="note-btn" data-note="E">Ми</button>
+        <button class="note-btn" data-note="F">Фа</button>
+        <button class="note-btn" data-note="G">Соль</button>
+        <button class="note-btn" data-note="A">Ля</button>
+        <button class="note-btn" data-note="B">Си</button>
+      </div>
+
+      <div class="identify-feedback hidden" id="staff-feedback">
+        <div class="feedback-icon" id="staff-feedback-icon"></div>
+        <div class="feedback-text" id="staff-feedback-text"></div>
+        <button class="next-btn" id="staff-next-btn">Следующая нота →</button>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+
+</html>
