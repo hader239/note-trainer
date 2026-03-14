@@ -392,7 +392,7 @@ class StaffRenderer {
 
     ctx.clearRect(0, 0, w, h);
 
-    const lineSpacing = h / 8;
+    const lineSpacing = h / 10;
     const centerY = h / 2;
     const bottomLineY = centerY + 2 * lineSpacing;
 
