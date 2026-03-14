@@ -1,35 +1,20 @@
 /* ═══════════════════════════════════════════
-   Тренажёр нот — Главное приложение
+   Тренажёр нот — Чтение нот для скрипки
    ═══════════════════════════════════════════ */
 
-// ── Ноты (равномерная темперация, Ля4 = 440 Гц) ──
+// ── Ноты ──
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const NOTE_NAMES_RU = {
-  'C': 'До', 'C#': 'До♯',
-  'D': 'Ре', 'D#': 'Ре♯',
-  'E': 'Ми',
-  'F': 'Фа', 'F#': 'Фа♯',
-  'G': 'Соль', 'G#': 'Соль♯',
-  'A': 'Ля', 'A#': 'Ля♯',
-  'B': 'Си'
+  'C': 'До', 'C#': 'До♯', 'D': 'Ре', 'D#': 'Ре♯', 'E': 'Ми',
+  'F': 'Фа', 'F#': 'Фа♯', 'G': 'Соль', 'G#': 'Соль♯',
+  'A': 'Ля', 'A#': 'Ля♯', 'B': 'Си'
 };
-
-// Natural notes only (for staff mode — no sharps)
 const NATURAL_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 
 function noteFrequency(note, octave) {
   const semitone = NOTE_NAMES.indexOf(note);
   const dist = (octave - 4) * 12 + (semitone - 9);
   return 440 * Math.pow(2, dist / 12);
-}
-
-function frequencyToNote(freq) {
-  const semitoneFromA4 = 12 * Math.log2(freq / 440);
-  const rounded = Math.round(semitoneFromA4);
-  const cents = Math.round((semitoneFromA4 - rounded) * 100);
-  const noteIndex = (((rounded % 12) + 12 + 9) % 12);
-  const octave = 4 + Math.floor((rounded + 9) / 12);
-  return { note: NOTE_NAMES[noteIndex], octave, cents };
 }
 
 function noteLabel(note, octave) {
@@ -41,12 +26,157 @@ function noteNameRu(note) {
 }
 
 // ═══════════════════════════════════════════
-// Звуковой движок
+// Хранилище сессий (localStorage)
+// ═══════════════════════════════════════════
+
+const STORAGE_KEY = 'noteTrainerSessions';
+const CURRENT_SESSION_KEY = 'noteTrainerCurrentSession';
+
+class SessionTracker {
+  constructor() {
+    this.sessions = this._load();
+    this.current = this._loadCurrent();
+  }
+
+  _load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  _loadCurrent() {
+    try {
+      const raw = localStorage.getItem(CURRENT_SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  _save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(this.sessions));
+  }
+
+  _saveCurrent() {
+    if (this.current) {
+      localStorage.setItem(CURRENT_SESSION_KEY, JSON.stringify(this.current));
+    } else {
+      localStorage.removeItem(CURRENT_SESSION_KEY);
+    }
+  }
+
+  hasActiveSession() {
+    return this.current !== null;
+  }
+
+  finalizeIfActive() {
+    if (this.current && this.current.total > 0) {
+      this.sessions.push({ ...this.current });
+      this._save();
+    }
+    this.current = null;
+    this._saveCurrent();
+  }
+
+  startSession() {
+    this.current = { date: new Date().toISOString(), total: 0, correct: 0 };
+    this._saveCurrent();
+  }
+
+  recordAnswer(isCorrect) {
+    if (!this.current) return;
+    this.current.total++;
+    if (isCorrect) this.current.correct++;
+    this._saveCurrent();
+  }
+
+  endSession() {
+    if (!this.current || this.current.total === 0) {
+      this.current = null;
+      this._saveCurrent();
+      return;
+    }
+    this.sessions.push({ ...this.current });
+    this._save();
+    this.current = null;
+    this._saveCurrent();
+  }
+
+  getSessions() {
+    return [...this.sessions].reverse(); // newest first
+  }
+
+  getStats() {
+    const count = this.sessions.length;
+    const totalAnswers = this.sessions.reduce((s, x) => s + x.total, 0);
+    const totalCorrect = this.sessions.reduce((s, x) => s + x.correct, 0);
+    const accuracy = totalAnswers > 0 ? Math.round((totalCorrect / totalAnswers) * 100) : null;
+    return { count, totalAnswers, accuracy };
+  }
+}
+
+// ═══════════════════════════════════════════
+// Настройки звука (localStorage)
+// ═══════════════════════════════════════════
+
+const SOUND_SETTINGS_KEY = 'noteTrainerSoundSettings';
+
+const DEFAULTS = {
+  volume: 70, vibrato: 4, brightness: 60, duration: 15,
+  detune: 8, body1: 40, body2: 30, body3: 20, filterQ: 7, attack: 15
+};
+
+class SoundSettings {
+  constructor() {
+    this.settings = this._load();
+  }
+
+  _load() {
+    try {
+      const raw = localStorage.getItem(SOUND_SETTINGS_KEY);
+      return raw ? { ...DEFAULTS, ...JSON.parse(raw) } : { ...DEFAULTS };
+    } catch {
+      return { ...DEFAULTS };
+    }
+  }
+
+  save() {
+    localStorage.setItem(SOUND_SETTINGS_KEY, JSON.stringify(this.settings));
+  }
+
+  get(key) { return this.settings[key]; }
+
+  set(key, value) {
+    this.settings[key] = value;
+    this.save();
+  }
+
+  // Computed getters for the audio engine
+  get volumeGain() { return this.settings.volume / 100; }
+  get vibratoDepth() { return this.settings.vibrato; }
+  get filterFreq() { return 800 + (this.settings.brightness / 100) * 7200; }
+  get durationSec() { return this.settings.duration / 10; }
+  get detuneHz() { return this.settings.detune / 10; }
+  get bodyGain1() { return this.settings.body1 / 10; }
+  get bodyGain2() { return this.settings.body2 / 10; }
+  get bodyGain3() { return this.settings.body3 / 10; }
+  get filterQVal() { return this.settings.filterQ / 10; }
+  get attackSec() { return this.settings.attack / 100; }
+}
+
+// ═══════════════════════════════════════════
+// Звуковой движок (имитация скрипки)
 // ═══════════════════════════════════════════
 
 class AudioEngine {
-  constructor() {
+  constructor(soundSettings) {
     this.ctx = null;
+    this.ss = soundSettings;
+    this.violinWave = null;
+    this.reverbBuffer = null;
   }
 
   ensureContext() {
@@ -56,136 +186,174 @@ class AudioEngine {
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+    // Build PeriodicWave and reverb buffer on first use
+    if (!this.violinWave) {
+      this._buildViolinWave();
+    }
+    if (!this.reverbBuffer) {
+      this._buildReverbBuffer();
+    }
     return this.ctx;
   }
 
-  playNote(note, octave, duration = 1.2) {
+  // Custom waveform based on measured violin harmonic amplitudes
+  _buildViolinWave() {
+    const n = 16; // number of harmonics
+    const real = new Float32Array(n + 1);
+    const imag = new Float32Array(n + 1);
+    // DC offset = 0
+    real[0] = 0; imag[0] = 0;
+    // Measured violin harmonic amplitudes (from acoustic analysis)
+    const amps = [
+      1.0,   // 1st - fundamental
+      0.85,  // 2nd - very strong in violin
+      0.55,  // 3rd - warmth
+      0.40,  // 4th
+      0.30,  // 5th
+      0.20,  // 6th - brightness region
+      0.15,  // 7th
+      0.10,  // 8th
+      0.07,  // 9th - upper shimmer
+      0.05,  // 10th
+      0.04,  // 11th
+      0.03,  // 12th
+      0.02,  // 13th
+      0.015, // 14th
+      0.01,  // 15th
+      0.008, // 16th
+    ];
+    for (let i = 0; i < amps.length; i++) {
+      // Put amplitudes in imag (sine components) for sawtooth-like phase
+      imag[i + 1] = amps[i];
+    }
+    this.violinWave = this.ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+  }
+
+  // Algorithmic reverb: decaying filtered noise (~1.5s)
+  _buildReverbBuffer() {
+    const sr = this.ctx.sampleRate;
+    const len = sr * 1.5; // 1.5 seconds
+    const buf = this.ctx.createBuffer(2, len, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        // Exponentially decaying white noise
+        const t = i / sr;
+        const decay = Math.exp(-t * 4.0); // fast decay
+        data[i] = (Math.random() * 2 - 1) * decay * 0.4;
+      }
+    }
+    this.reverbBuffer = buf;
+  }
+
+  playNote(note, octave) {
     const ctx = this.ensureContext();
     const freq = noteFrequency(note, octave);
     const now = ctx.currentTime;
+    const dur = this.ss.durationSec;
+    const vol = this.ss.volumeGain;
+    const atk = this.ss.attackSec;
 
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(freq, now);
+    // ── Master output gain with bow-like amplitude envelope ──
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(0, now);
+    master.gain.linearRampToValueAtTime(vol * 0.28, now + atk);
+    master.gain.linearRampToValueAtTime(vol * 0.22, now + atk + 0.2);
+    if (dur > 0.6) {
+      master.gain.setValueAtTime(vol * 0.22, now + dur - 0.2);
+    }
+    master.gain.linearRampToValueAtTime(0.001, now + dur);
+    master.connect(ctx.destination);
+
+    // ── Reverb (wet path) ──
+    const reverb = ctx.createConvolver();
+    reverb.buffer = this.reverbBuffer;
+    const reverbGain = ctx.createGain();
+    reverbGain.gain.setValueAtTime(0.15, now); // subtle reverb
+    reverb.connect(reverbGain).connect(master);
+
+    // ── Dry path ──
+    const dryGain = ctx.createGain();
+    dryGain.gain.setValueAtTime(0.85, now);
+    dryGain.connect(master);
+
+    // ── Low-pass filter with envelope (brightness) ──
+    const lpf = ctx.createBiquadFilter();
+    lpf.type = 'lowpass';
+    const baseCutoff = this.ss.filterFreq;
+    lpf.frequency.setValueAtTime(baseCutoff * 0.4, now);
+    lpf.frequency.linearRampToValueAtTime(baseCutoff, now + atk);
+    lpf.frequency.linearRampToValueAtTime(baseCutoff * 0.7, now + atk + 0.3);
+    lpf.Q.setValueAtTime(this.ss.filterQVal, now);
+    // LPF feeds both dry and reverb
+    lpf.connect(dryGain);
+    lpf.connect(reverb);
+
+    // ── Body resonance (peaking EQ at violin formant frequencies) ──
+    const f1 = ctx.createBiquadFilter();
+    f1.type = 'peaking';
+    f1.frequency.setValueAtTime(450, now);  // B1- body mode
+    f1.Q.setValueAtTime(3.5, now);
+    f1.gain.setValueAtTime(this.ss.bodyGain1, now);
+
+    const f2 = ctx.createBiquadFilter();
+    f2.type = 'peaking';
+    f2.frequency.setValueAtTime(550, now);  // B1+ body mode
+    f2.Q.setValueAtTime(3.0, now);
+    f2.gain.setValueAtTime(this.ss.bodyGain2, now);
+
+    const f3 = ctx.createBiquadFilter();
+    f3.type = 'peaking';
+    f3.frequency.setValueAtTime(2500, now); // bridge resonance
+    f3.Q.setValueAtTime(2.0, now);
+    f3.gain.setValueAtTime(this.ss.bodyGain3, now);
+
+    // Chain: source → f1 → f2 → f3 → lpf
+    f1.connect(f2).connect(f3).connect(lpf);
+
+    // ── Vibrato LFO (delayed onset) ──
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(5.0, now);
+    const vibDepth = this.ss.vibratoDepth * 0.5;
+    lfoGain.gain.setValueAtTime(0, now);
+    lfoGain.gain.linearRampToValueAtTime(0, now + 0.2);
+    lfoGain.gain.linearRampToValueAtTime(vibDepth, now + 0.5);
+    lfo.connect(lfoGain);
+    lfo.start(now);
+    lfo.stop(now + dur + 0.1);
+
+    // ── Two detuned PeriodicWave oscillators ──
+    const osc1 = ctx.createOscillator();
+    osc1.setPeriodicWave(this.violinWave);
+    osc1.frequency.setValueAtTime(freq, now);
+    lfoGain.connect(osc1.frequency);
 
     const osc2 = ctx.createOscillator();
-    osc2.type = 'triangle';
-    osc2.frequency.setValueAtTime(freq, now);
+    osc2.setPeriodicWave(this.violinWave);
+    osc2.frequency.setValueAtTime(freq + this.ss.detuneHz, now);
+    lfoGain.connect(osc2.frequency);
 
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.35, now + 0.05);
-    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.3);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    const mix1 = ctx.createGain();
+    mix1.gain.setValueAtTime(0.5, now);
+    const mix2 = ctx.createGain();
+    mix2.gain.setValueAtTime(0.5, now);
 
-    const gain2 = ctx.createGain();
-    gain2.gain.setValueAtTime(0, now);
-    gain2.gain.linearRampToValueAtTime(0.08, now + 0.05);
-    gain2.gain.exponentialRampToValueAtTime(0.001, now + duration);
+    osc1.connect(mix1).connect(f1);
+    osc2.connect(mix2).connect(f1);
 
-    osc.connect(gain).connect(ctx.destination);
-    osc2.connect(gain2).connect(ctx.destination);
-
-    osc.start(now);
-    osc.stop(now + duration);
+    osc1.start(now);
+    osc1.stop(now + dur);
     osc2.start(now);
-    osc2.stop(now + duration);
+    osc2.stop(now + dur);
 
-    osc.onended = () => {
-      osc.disconnect();
-      osc2.disconnect();
-      gain.disconnect();
-      gain2.disconnect();
+    // ── Cleanup ──
+    osc1.onended = () => {
+      [osc1, osc2, lfo].forEach(o => o.disconnect());
+      [mix1, mix2, lfoGain, f1, f2, f3, lpf, dryGain, reverb, reverbGain, master]
+        .forEach(n => n.disconnect());
     };
-  }
-}
-
-// ═══════════════════════════════════════════
-// Детектор высоты тона (автокорреляция)
-// ═══════════════════════════════════════════
-
-class PitchDetector {
-  constructor(audioCtx) {
-    this.ctx = audioCtx;
-    this.analyser = null;
-    this.source = null;
-    this.stream = null;
-    this.running = false;
-  }
-
-  async start() {
-    this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    this.source = this.ctx.createMediaStreamSource(this.stream);
-    this.analyser = this.ctx.createAnalyser();
-    this.analyser.fftSize = 4096;
-    this.source.connect(this.analyser);
-    this.running = true;
-  }
-
-  stop() {
-    this.running = false;
-    if (this.source) {
-      this.source.disconnect();
-      this.source = null;
-    }
-    if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
-      this.stream = null;
-    }
-  }
-
-  detect() {
-    if (!this.analyser) return null;
-
-    const bufLen = this.analyser.fftSize;
-    const buf = new Float32Array(bufLen);
-    this.analyser.getFloatTimeDomainData(buf);
-
-    let rms = 0;
-    for (let i = 0; i < bufLen; i++) rms += buf[i] * buf[i];
-    rms = Math.sqrt(rms / bufLen);
-    if (rms < 0.01) return null;
-
-    const sampleRate = this.ctx.sampleRate;
-    const minPeriod = Math.floor(sampleRate / 1200);
-    const maxPeriod = Math.floor(sampleRate / 60);
-
-    let bestCorr = 0;
-    let bestPeriod = 0;
-
-    for (let period = minPeriod; period < maxPeriod && period < bufLen / 2; period++) {
-      let corr = 0;
-      for (let i = 0; i < bufLen / 2; i++) {
-        corr += buf[i] * buf[i + period];
-      }
-      if (corr > bestCorr) {
-        bestCorr = corr;
-        bestPeriod = period;
-      }
-    }
-
-    if (bestPeriod === 0) return null;
-
-    const prev = this._autoCorr(buf, bestPeriod - 1);
-    const curr = this._autoCorr(buf, bestPeriod);
-    const next = this._autoCorr(buf, bestPeriod + 1);
-    const shift = (prev - next) / (2 * (prev - 2 * curr + next));
-    const refinedPeriod = bestPeriod + (isFinite(shift) ? shift : 0);
-
-    const freq = sampleRate / refinedPeriod;
-    if (freq < 60 || freq > 1200) return null;
-
-    const info = frequencyToNote(freq);
-    return { frequency: freq, ...info };
-  }
-
-  _autoCorr(buf, period) {
-    let corr = 0;
-    const half = Math.floor(buf.length / 2);
-    for (let i = 0; i < half; i++) {
-      corr += buf[i] * buf[i + period];
-    }
-    return corr;
   }
 }
 
@@ -210,23 +378,11 @@ class StaffRenderer {
     this.h = rect.height;
   }
 
-  // Get Y position for a note. We map note positions on the treble clef:
-  // Each staff line/space is half a lineSpacing apart.
-  // Bottom line (E4) = position 0, each step up = +1
-  // Positions (from bottom): E4=0, F4=1, G4=2, A4=3, B4=4, C5=5, D5=6, E5=7, F5=8
-  // Below staff: D4=-1, C4=-2, B3=-3, A3=-4, G3=-5
-  // Above staff: G5=9, A5=10, B5=11, C6=12
-
   _notePosition(note, octave) {
-    // Scale degree from C (C=0, D=1, E=2, F=3, G=4, A=5, B=6)
     const degrees = { 'C': 0, 'D': 1, 'E': 2, 'F': 3, 'G': 4, 'A': 5, 'B': 6 };
     const deg = degrees[note];
     if (deg === undefined) return null;
-    // E4 is our reference = position 0
-    // E4 has octave=4, degree=2
-    const refPos = 0; // E4
-    const pos = (octave - 4) * 7 + deg - 2; // relative to E4
-    return pos;
+    return (octave - 4) * 7 + deg - 2;
   }
 
   draw(note, octave) {
@@ -237,12 +393,9 @@ class StaffRenderer {
     ctx.clearRect(0, 0, w, h);
 
     const lineSpacing = h / 8;
-    // Staff lines: bottom line = E4 (position 0)
-    // We center 5 lines vertically. Bottom line at y = centerY + 2*lineSpacing
     const centerY = h / 2;
     const bottomLineY = centerY + 2 * lineSpacing;
 
-    // Draw 5 staff lines
     ctx.strokeStyle = 'rgba(238, 238, 245, 0.25)';
     ctx.lineWidth = 1.5;
     for (let i = 0; i < 5; i++) {
@@ -253,27 +406,22 @@ class StaffRenderer {
       ctx.stroke();
     }
 
-    // Draw treble clef symbol
     ctx.font = `${lineSpacing * 5.5}px serif`;
     ctx.fillStyle = 'rgba(238, 238, 245, 0.4)';
     ctx.textBaseline = 'middle';
     ctx.fillText('𝄞', 42, centerY + lineSpacing * 0.15);
 
-    // Draw the note
     const pos = this._notePosition(note, octave);
     if (pos === null) return;
 
     const noteX = w * 0.58;
     const noteY = bottomLineY - pos * (lineSpacing / 2);
 
-    // Ledger lines (below or above the staff)
     ctx.strokeStyle = 'rgba(238, 238, 245, 0.3)';
     ctx.lineWidth = 1.5;
     const noteRadius = lineSpacing * 0.38;
     const ledgerHalf = noteRadius + 8;
 
-    // Below staff: position < 0 means below bottom line E4
-    // Ledger lines at positions -2 (C4), -4 (A3), etc. (even positions = on a line)
     if (pos < 0) {
       for (let p = -2; p >= pos; p -= 2) {
         const ly = bottomLineY - p * (lineSpacing / 2);
@@ -284,7 +432,6 @@ class StaffRenderer {
       }
     }
 
-    // Above staff: top line is position 8 (F5)
     if (pos > 8) {
       for (let p = 10; p <= pos; p += 2) {
         const ly = bottomLineY - p * (lineSpacing / 2);
@@ -295,13 +442,9 @@ class StaffRenderer {
       }
     }
 
-    // Also handle the middle-C ledger line: C4 is at position -2
-    // Already handled by the loop above.
-
-    // Draw note head (filled ellipse)
     ctx.save();
     ctx.translate(noteX, noteY);
-    ctx.rotate(-0.2); // slight tilt for natural look
+    ctx.rotate(-0.2);
     ctx.beginPath();
     ctx.ellipse(0, 0, noteRadius * 1.3, noteRadius, 0, 0, Math.PI * 2);
     ctx.fillStyle = '#00e5ff';
@@ -310,11 +453,10 @@ class StaffRenderer {
     ctx.fill();
     ctx.restore();
 
-    // Draw stem
     ctx.shadowColor = 'transparent';
     ctx.strokeStyle = '#00e5ff';
     ctx.lineWidth = 2;
-    const stemUp = pos < 4; // stem goes up if note is below middle of staff
+    const stemUp = pos < 4;
     ctx.beginPath();
     if (stemUp) {
       ctx.moveTo(noteX + noteRadius * 1.2, noteY);
@@ -333,421 +475,302 @@ class StaffRenderer {
 
 class App {
   constructor() {
-    this.audio = new AudioEngine();
-    this.pitchDetector = null;
-    this.currentScreen = 'landing';
-
-    // Sing mode state
-    this.singTarget = null;
-    this.singPrevKey = null;
-    this.singListening = false;
-    this.singAnimFrame = null;
-    this.singReadings = [];
-
-    // Identify mode state
-    this.identifyTarget = null;
-    this.identifyPrevKey = null;
-    this.identifyStreak = 0;
-    this.identifyAnswered = false;
-
-    // Staff mode state
-    this.staffTarget = null;
-    this.staffPrevKey = null;
-    this.staffStreak = 0;
-    this.staffAnswered = false;
+    this.soundSettings = new SoundSettings();
+    this.audio = new AudioEngine(this.soundSettings);
+    this.tracker = new SessionTracker();
     this.staffRenderer = null;
 
-    // Note range for exercises: [G3, B5]
-    // Build chromatic range G3–B5 for sing & identify modes
-    this.chromaticRange = [];
-    const startSemitone = NOTE_NAMES.indexOf('G') + 3 * 12; // G3
-    const endSemitone = NOTE_NAMES.indexOf('B') + 5 * 12;   // B5
-    for (let s = startSemitone; s <= endSemitone; s++) {
-      const note = NOTE_NAMES[s % 12];
-      const octave = Math.floor(s / 12);
-      this.chromaticRange.push({ note, octave });
-    }
+    this.target = null;
+    this.prevKey = null;
+    this.streak = 0;
+    this.answered = false;
 
-    // Build natural-note range G3–B5 for staff mode
-    this.staffRange = this.chromaticRange.filter(
-      entry => !entry.note.includes('#')
-    );
+    // Violin 1st position: natural notes G3–B5
+    this.noteRange = [];
+    for (const oct of [3, 4, 5]) {
+      for (const n of NATURAL_NOTES) {
+        const semitone = NOTE_NAMES.indexOf(n) + oct * 12;
+        const gStart = NOTE_NAMES.indexOf('G') + 3 * 12;
+        const bEnd = NOTE_NAMES.indexOf('B') + 5 * 12;
+        if (semitone >= gStart && semitone <= bEnd) {
+          this.noteRange.push({ note: n, octave: oct });
+        }
+      }
+    }
 
     this.bindElements();
     this.bindEvents();
+    this.initSettings();
+
+    // If page was reloaded mid-session, save it and show dashboard
+    this.tracker.finalizeIfActive();
+    this.renderDashboard();
   }
 
   bindElements() {
-    this.screens = {
-      landing: document.getElementById('landing'),
-      sing: document.getElementById('sing-mode'),
-      identify: document.getElementById('identify-mode'),
-      staff: document.getElementById('staff-mode'),
-    };
+    // Screens
+    this.dashboardScreen = document.getElementById('dashboard');
+    this.practiceScreen = document.getElementById('practice');
 
-    // Sing mode
-    this.singTargetEl = document.getElementById('sing-target');
-    this.singPlayRefBtn = document.getElementById('sing-play-ref');
-    this.singStartBtn = document.getElementById('sing-start-btn');
-    this.meterNeedle = document.getElementById('meter-needle');
-    this.detectedNoteEl = document.getElementById('detected-note');
-    this.detectedCentsEl = document.getElementById('detected-cents');
-    this.singFeedback = document.getElementById('sing-feedback');
-    this.singFeedbackIcon = document.getElementById('sing-feedback-icon');
-    this.singFeedbackText = document.getElementById('sing-feedback-text');
-    this.singNextBtn = document.getElementById('sing-next-btn');
+    // Dashboard
+    this.statSessions = document.getElementById('stat-sessions');
+    this.statTotal = document.getElementById('stat-total');
+    this.statAccuracy = document.getElementById('stat-accuracy');
+    this.historyBody = document.getElementById('history-body');
+    this.historyTable = document.getElementById('history-table');
+    this.emptyState = document.getElementById('empty-state');
+    this.startBtn = document.getElementById('start-btn');
 
-    // Identify mode
-    this.identifyPlayBtn = document.getElementById('identify-play-btn');
-    this.playHint = document.getElementById('play-hint');
+    // Settings
+    this.settingsToggle = document.getElementById('settings-toggle');
+    this.settingsPanel = document.getElementById('settings-panel');
+    this.volSlider = document.getElementById('vol-slider');
+    this.volValue = document.getElementById('vol-value');
+    this.vibratoSlider = document.getElementById('vibrato-slider');
+    this.vibratoValue = document.getElementById('vibrato-value');
+    this.brightSlider = document.getElementById('bright-slider');
+    this.brightValue = document.getElementById('bright-value');
+    this.durSlider = document.getElementById('dur-slider');
+    this.durValue = document.getElementById('dur-value');
+    this.detuneSlider = document.getElementById('detune-slider');
+    this.detuneValue = document.getElementById('detune-value');
+    this.body1Slider = document.getElementById('body1-slider');
+    this.body1Value = document.getElementById('body1-value');
+    this.body2Slider = document.getElementById('body2-slider');
+    this.body2Value = document.getElementById('body2-value');
+    this.body3Slider = document.getElementById('body3-slider');
+    this.body3Value = document.getElementById('body3-value');
+    this.filterQSlider = document.getElementById('filterq-slider');
+    this.filterQValue = document.getElementById('filterq-value');
+    this.attackSlider = document.getElementById('attack-slider');
+    this.attackValue = document.getElementById('attack-value');
+    this.testBtn = document.getElementById('test-btn');
+
+    // Practice
+    this.endBtn = document.getElementById('end-btn');
+    this.canvas = document.getElementById('staff-canvas');
+    this.playRefBtn = document.getElementById('play-ref-btn');
     this.noteGrid = document.getElementById('note-grid');
     this.streakEl = document.getElementById('streak');
-    this.identifyFeedback = document.getElementById('identify-feedback');
-    this.identifyFeedbackIcon = document.getElementById('identify-feedback-icon');
-    this.identifyFeedbackText = document.getElementById('identify-feedback-text');
-    this.identifyNextBtn = document.getElementById('identify-next-btn');
-
-    // Staff mode
-    this.staffCanvas = document.getElementById('staff-canvas');
-    this.staffNoteGrid = document.getElementById('staff-note-grid');
-    this.staffStreakEl = document.getElementById('staff-streak');
-    this.staffFeedback = document.getElementById('staff-feedback');
-    this.staffFeedbackIcon = document.getElementById('staff-feedback-icon');
-    this.staffFeedbackText = document.getElementById('staff-feedback-text');
-    this.staffNextBtn = document.getElementById('staff-next-btn');
+    this.feedback = document.getElementById('feedback');
+    this.feedbackIcon = document.getElementById('feedback-icon');
+    this.feedbackText = document.getElementById('feedback-text');
+    this.nextBtn = document.getElementById('next-btn');
   }
 
   bindEvents() {
-    // Navigation
-    document.getElementById('btn-mode-sing').addEventListener('click', () => this.showScreen('sing'));
-    document.getElementById('btn-mode-identify').addEventListener('click', () => this.showScreen('identify'));
-    document.getElementById('btn-mode-staff').addEventListener('click', () => this.showScreen('staff'));
-    document.getElementById('sing-back').addEventListener('click', () => this.showScreen('landing'));
-    document.getElementById('identify-back').addEventListener('click', () => this.showScreen('landing'));
-    document.getElementById('staff-back').addEventListener('click', () => this.showScreen('landing'));
-
-    // Sing mode
-    this.singPlayRefBtn.addEventListener('click', () => this.playSingReference());
-    this.singStartBtn.addEventListener('click', () => this.toggleSingListening());
-    this.singNextBtn.addEventListener('click', () => this.newSingRound());
-
-    // Identify mode
-    this.identifyPlayBtn.addEventListener('click', () => this.playIdentifyNote());
+    this.startBtn.addEventListener('click', () => this.startPractice());
+    this.endBtn.addEventListener('click', () => this.endPractice());
+    this.playRefBtn.addEventListener('click', () => this.playReference());
     this.noteGrid.addEventListener('click', (e) => {
       const btn = e.target.closest('.note-btn');
-      if (btn && !this.identifyAnswered) this.checkIdentifyAnswer(btn);
+      if (btn && !this.answered) this.checkAnswer(btn);
     });
-    this.identifyNextBtn.addEventListener('click', () => this.newIdentifyRound());
+    this.nextBtn.addEventListener('click', () => this.newRound());
 
-    // Staff mode
-    this.staffNoteGrid.addEventListener('click', (e) => {
-      const btn = e.target.closest('.note-btn');
-      if (btn && !this.staffAnswered) this.checkStaffAnswer(btn);
+    // Settings
+    this.settingsToggle.addEventListener('click', () => {
+      this.settingsPanel.classList.toggle('hidden');
     });
-    this.staffNextBtn.addEventListener('click', () => this.newStaffRound());
+
+    this.volSlider.addEventListener('input', () => {
+      this.soundSettings.set('volume', +this.volSlider.value);
+      this.volValue.textContent = `${this.volSlider.value}%`;
+    });
+    this.vibratoSlider.addEventListener('input', () => {
+      this.soundSettings.set('vibrato', +this.vibratoSlider.value);
+      this.vibratoValue.textContent = this.vibratoSlider.value;
+    });
+    this.brightSlider.addEventListener('input', () => {
+      this.soundSettings.set('brightness', +this.brightSlider.value);
+      this.brightValue.textContent = `${this.brightSlider.value}%`;
+    });
+    this.durSlider.addEventListener('input', () => {
+      this.soundSettings.set('duration', +this.durSlider.value);
+      this.durValue.textContent = `${(this.durSlider.value / 10).toFixed(1)}с`;
+    });
+    this.detuneSlider.addEventListener('input', () => {
+      this.soundSettings.set('detune', +this.detuneSlider.value);
+      this.detuneValue.textContent = (this.detuneSlider.value / 10).toFixed(1);
+    });
+    this.body1Slider.addEventListener('input', () => {
+      this.soundSettings.set('body1', +this.body1Slider.value);
+      this.body1Value.textContent = (this.body1Slider.value / 10).toFixed(1);
+    });
+    this.body2Slider.addEventListener('input', () => {
+      this.soundSettings.set('body2', +this.body2Slider.value);
+      this.body2Value.textContent = (this.body2Slider.value / 10).toFixed(1);
+    });
+    this.body3Slider.addEventListener('input', () => {
+      this.soundSettings.set('body3', +this.body3Slider.value);
+      this.body3Value.textContent = (this.body3Slider.value / 10).toFixed(1);
+    });
+    this.filterQSlider.addEventListener('input', () => {
+      this.soundSettings.set('filterQ', +this.filterQSlider.value);
+      this.filterQValue.textContent = (this.filterQSlider.value / 10).toFixed(1);
+    });
+    this.attackSlider.addEventListener('input', () => {
+      this.soundSettings.set('attack', +this.attackSlider.value);
+      this.attackValue.textContent = `${this.attackSlider.value * 10}мс`;
+    });
+    this.testBtn.addEventListener('click', () => {
+      this.audio.playNote('A', 4);
+    });
+  }
+
+  initSettings() {
+    const ss = this.soundSettings;
+    this.volSlider.value = ss.get('volume');
+    this.volValue.textContent = `${ss.get('volume')}%`;
+    this.vibratoSlider.value = ss.get('vibrato');
+    this.vibratoValue.textContent = ss.get('vibrato');
+    this.brightSlider.value = ss.get('brightness');
+    this.brightValue.textContent = `${ss.get('brightness')}%`;
+    this.durSlider.value = ss.get('duration');
+    this.durValue.textContent = `${(ss.get('duration') / 10).toFixed(1)}с`;
+    this.detuneSlider.value = ss.get('detune');
+    this.detuneValue.textContent = (ss.get('detune') / 10).toFixed(1);
+    this.body1Slider.value = ss.get('body1');
+    this.body1Value.textContent = (ss.get('body1') / 10).toFixed(1);
+    this.body2Slider.value = ss.get('body2');
+    this.body2Value.textContent = (ss.get('body2') / 10).toFixed(1);
+    this.body3Slider.value = ss.get('body3');
+    this.body3Value.textContent = (ss.get('body3') / 10).toFixed(1);
+    this.filterQSlider.value = ss.get('filterQ');
+    this.filterQValue.textContent = (ss.get('filterQ') / 10).toFixed(1);
+    this.attackSlider.value = ss.get('attack');
+    this.attackValue.textContent = `${ss.get('attack') * 10}мс`;
   }
 
   // ── Навигация ──
 
   showScreen(name) {
-    if (this.singListening) this.stopSingListening();
+    this.dashboardScreen.classList.toggle('active', name === 'dashboard');
+    this.practiceScreen.classList.toggle('active', name === 'practice');
+  }
 
-    Object.entries(this.screens).forEach(([key, el]) => {
-      el.classList.toggle('active', key === name);
+  // ── Дашборд ──
+
+  renderDashboard() {
+    const stats = this.tracker.getStats();
+    this.statSessions.textContent = stats.count;
+    this.statTotal.textContent = stats.totalAnswers;
+    this.statAccuracy.textContent = stats.accuracy !== null ? `${stats.accuracy}%` : '—';
+
+    const sessions = this.tracker.getSessions();
+    this.historyBody.innerHTML = '';
+
+    if (sessions.length === 0) {
+      this.historyTable.classList.add('hidden');
+      this.emptyState.classList.remove('hidden');
+    } else {
+      this.historyTable.classList.remove('hidden');
+      this.emptyState.classList.add('hidden');
+
+      sessions.forEach(s => {
+        const accuracy = Math.round((s.correct / s.total) * 100);
+        const date = new Date(s.date);
+        const dateStr = date.toLocaleDateString('ru-RU', {
+          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+        });
+
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${dateStr}</td>
+          <td>${s.total}</td>
+          <td>${s.correct}</td>
+          <td><span class="accuracy-badge ${accuracy >= 80 ? 'good' : accuracy >= 50 ? 'ok' : 'low'}">${accuracy}%</span></td>
+        `;
+        this.historyBody.appendChild(tr);
+      });
+    }
+  }
+
+  // ── Тренировка ──
+
+  startPractice() {
+    this.tracker.startSession();
+    this.streak = 0;
+    this.streakEl.textContent = '0';
+    this.prevKey = null;
+
+    if (!this.staffRenderer) {
+      this.staffRenderer = new StaffRenderer(this.canvas);
+    }
+
+    this.showScreen('practice');
+
+    // Small delay to allow CSS transition before canvas draws
+    requestAnimationFrame(() => {
+      this.staffRenderer.resize();
+      this.newRound();
     });
-
-    this.currentScreen = name;
-
-    if (name === 'sing') this.newSingRound();
-    if (name === 'identify') this.newIdentifyRound();
-    if (name === 'staff') {
-      if (!this.staffRenderer) {
-        this.staffRenderer = new StaffRenderer(this.staffCanvas);
-      } else {
-        this.staffRenderer.resize();
-      }
-      this.newStaffRound();
-    }
   }
 
-  // ═══════════════════════════════════════════
-  // Режим 1: Спой ноту
-  // ═══════════════════════════════════════════
+  endPractice() {
+    this.tracker.endSession();
+    this.renderDashboard();
+    this.showScreen('dashboard');
+  }
 
-  newSingRound() {
+  playReference() {
+    if (!this.target) return;
+    this.audio.playNote(this.target.note, this.target.octave);
+  }
+
+  newRound() {
     let entry, key;
     do {
-      entry = this.chromaticRange[Math.floor(Math.random() * this.chromaticRange.length)];
+      entry = this.noteRange[Math.floor(Math.random() * this.noteRange.length)];
       key = `${entry.note}${entry.octave}`;
-    } while (key === this.singPrevKey);
-    this.singPrevKey = key;
-    this.singTarget = { note: entry.note, octave: entry.octave };
-
-    this.singTargetEl.textContent = noteLabel(entry.note, entry.octave);
-    this.singTargetEl.style.animation = 'none';
-    void this.singTargetEl.offsetWidth;
-    this.singTargetEl.style.animation = '';
-
-    this.singFeedback.classList.add('hidden');
-    this.singStartBtn.classList.remove('listening');
-    this.singStartBtn.querySelector('.btn-label').textContent = 'Начать запись';
-    this.meterNeedle.classList.add('hidden-needle');
-    this.detectedNoteEl.textContent = '—';
-    this.detectedCentsEl.textContent = '—';
-    this.singReadings = [];
-  }
-
-  playSingReference() {
-    if (!this.singTarget) return;
-    this.audio.playNote(this.singTarget.note, this.singTarget.octave);
-  }
-
-  async toggleSingListening() {
-    if (this.singListening) {
-      this.stopSingListening();
-      return;
-    }
-
-    try {
-      const ctx = this.audio.ensureContext();
-      this.pitchDetector = new PitchDetector(ctx);
-      await this.pitchDetector.start();
-
-      this.singListening = true;
-      this.singStartBtn.classList.add('listening');
-      this.singStartBtn.querySelector('.btn-label').textContent = 'Остановить';
-      this.meterNeedle.classList.remove('hidden-needle');
-      this.singReadings = [];
-
-      this.singLoop();
-
-      this.singTimeout = setTimeout(() => {
-        if (this.singListening) this.stopSingListening();
-      }, 5000);
-    } catch (err) {
-      console.error('Ошибка микрофона:', err);
-      this.detectedNoteEl.textContent = 'Нет доступа к микрофону';
-      this.singListening = false;
-      this.singStartBtn.classList.remove('listening');
-      this.singStartBtn.querySelector('.btn-label').textContent = 'Начать запись';
-    }
-  }
-
-  singLoop() {
-    if (!this.singListening) return;
-
-    if (this.audio.ctx && this.audio.ctx.state === 'suspended') {
-      this.audio.ctx.resume();
-    }
-
-    const result = this.pitchDetector.detect();
-    if (result) {
-      this.updatePitchMeter(result);
-      this.singReadings.push(result);
-    }
-
-    this.singAnimFrame = requestAnimationFrame(() => this.singLoop());
-  }
-
-  updatePitchMeter(result) {
-    const targetFreq = noteFrequency(this.singTarget.note, this.singTarget.octave);
-    const centsOff = 1200 * Math.log2(result.frequency / targetFreq);
-    const clampedCents = Math.max(-50, Math.min(50, centsOff));
-
-    const pct = 50 + (clampedCents / 50) * 45;
-    this.meterNeedle.style.left = `${pct}%`;
-
-    this.detectedNoteEl.textContent = noteLabel(result.note, result.octave);
-
-    const absCents = Math.abs(Math.round(centsOff));
-    if (centsOff > 2) {
-      this.detectedCentsEl.textContent = `+${absCents}¢ выше`;
-    } else if (centsOff < -2) {
-      this.detectedCentsEl.textContent = `−${absCents}¢ ниже`;
-    } else {
-      this.detectedCentsEl.textContent = '✓ Точно!';
-    }
-  }
-
-  stopSingListening() {
-    this.singListening = false;
-    if (this.singTimeout) clearTimeout(this.singTimeout);
-    if (this.singAnimFrame) cancelAnimationFrame(this.singAnimFrame);
-    if (this.pitchDetector) {
-      this.pitchDetector.stop();
-      this.pitchDetector = null;
-    }
-
-    this.singStartBtn.classList.remove('listening');
-    this.singStartBtn.querySelector('.btn-label').textContent = 'Начать запись';
-
-    this.showSingFeedback();
-  }
-
-  showSingFeedback() {
-    if (this.singReadings.length === 0) {
-      this.singFeedbackIcon.textContent = '🤷';
-      this.singFeedbackText.innerHTML = "Не удалось определить высоту тона.<br>Попробуй петь громче или ближе к микрофону!";
-      this.singFeedback.classList.remove('hidden');
-      return;
-    }
-
-    const targetFreq = noteFrequency(this.singTarget.note, this.singTarget.octave);
-
-    const centsList = this.singReadings.map(r => 1200 * Math.log2(r.frequency / targetFreq));
-    const avgCents = centsList.reduce((a, b) => a + b, 0) / centsList.length;
-    const absCents = Math.abs(Math.round(avgCents));
-
-    let icon, text;
-    if (absCents <= 10) {
-      icon = '🎯';
-      text = `<strong>Отлично!</strong> Отклонение всего ${absCents}¢ — почти идеально!`;
-    } else if (absCents <= 25) {
-      icon = '👍';
-      text = `<strong>Хорошо!</strong> Среднее отклонение ${absCents}¢ ${avgCents > 0 ? 'выше' : 'ниже'}.`;
-    } else if (absCents <= 50) {
-      icon = '😬';
-      text = `<strong>Почти.</strong> Отклонение ${absCents}¢ ${avgCents > 0 ? 'выше' : 'ниже'}. Продолжай тренироваться!`;
-    } else {
-      icon = '💪';
-      const semitonesOff = Math.round(avgCents / 100);
-      text = `Отклонение примерно ${Math.abs(semitonesOff)} полутон${this._pluralSemitone(Math.abs(semitonesOff))} ${avgCents > 0 ? 'выше' : 'ниже'}. Послушай ноту для калибровки!`;
-    }
-
-    this.singFeedbackIcon.textContent = icon;
-    this.singFeedbackText.innerHTML = text;
-    this.singFeedback.classList.remove('hidden');
-  }
-
-  _pluralSemitone(n) {
-    if (n === 1) return '';
-    if (n >= 2 && n <= 4) return 'а';
-    return 'ов';
-  }
-
-  // ═══════════════════════════════════════════
-  // Режим 2: Угадай ноту
-  // ═══════════════════════════════════════════
-
-  newIdentifyRound() {
-    let entry, key;
-    do {
-      entry = this.chromaticRange[Math.floor(Math.random() * this.chromaticRange.length)];
-      key = `${entry.note}${entry.octave}`;
-    } while (key === this.identifyPrevKey);
-    this.identifyPrevKey = key;
-    this.identifyTarget = { note: entry.note, octave: entry.octave };
-    this.identifyAnswered = false;
+    } while (key === this.prevKey);
+    this.prevKey = key;
+    this.target = { note: entry.note, octave: entry.octave };
+    this.answered = false;
 
     this.noteGrid.querySelectorAll('.note-btn').forEach(btn => {
       btn.classList.remove('correct', 'wrong', 'reveal');
       btn.disabled = false;
     });
 
-    this.identifyFeedback.classList.add('hidden');
-    this.playHint.textContent = 'Нажми, чтобы услышать ноту';
-    this.identifyPlayBtn.classList.remove('playing');
+    this.feedback.classList.add('hidden');
+
+    this.staffRenderer.resize();
+    this.staffRenderer.draw(entry.note, entry.octave);
   }
 
-  playIdentifyNote() {
-    if (!this.identifyTarget) return;
-    this.audio.playNote(this.identifyTarget.note, this.identifyTarget.octave);
-    this.identifyPlayBtn.classList.remove('playing');
-    void this.identifyPlayBtn.offsetWidth;
-    this.identifyPlayBtn.classList.add('playing');
-    this.playHint.textContent = 'Играет… слушай внимательно!';
-    setTimeout(() => {
-      this.playHint.textContent = 'Нажми ещё раз, чтобы переслушать';
-    }, 1500);
-  }
-
-  checkIdentifyAnswer(btn) {
-    this.identifyAnswered = true;
+  checkAnswer(btn) {
+    this.answered = true;
     const chosen = btn.dataset.note;
-    const correct = this.identifyTarget.note;
+    const correct = this.target.note;
     const isCorrect = chosen === correct;
+
+    // Record in session
+    this.tracker.recordAnswer(isCorrect);
 
     this.noteGrid.querySelectorAll('.note-btn').forEach(b => b.disabled = true);
 
     if (isCorrect) {
       btn.classList.add('correct');
-      this.identifyStreak++;
-      this.streakEl.textContent = this.identifyStreak;
+      this.streak++;
+      this.streakEl.textContent = this.streak;
 
-      this.identifyFeedbackIcon.textContent = '🎉';
-      this.identifyFeedbackText.innerHTML = `<strong>Верно!</strong> Это была ${noteLabel(correct, this.identifyTarget.octave)}.`;
+      this.feedbackIcon.textContent = '🎉';
+      this.feedbackText.innerHTML = `<strong>Верно!</strong> Это ${noteLabel(correct, this.target.octave)}.`;
     } else {
       btn.classList.add('wrong');
-      this.identifyStreak = 0;
+      this.streak = 0;
       this.streakEl.textContent = '0';
 
       this.noteGrid.querySelectorAll('.note-btn').forEach(b => {
         if (b.dataset.note === correct) b.classList.add('reveal');
       });
 
-      this.identifyFeedbackIcon.textContent = '😕';
-      this.identifyFeedbackText.innerHTML = `Это была <strong>${noteLabel(correct, this.identifyTarget.octave)}</strong>, а не ${noteNameRu(chosen)}.`;
+      this.feedbackIcon.textContent = '😕';
+      this.feedbackText.innerHTML = `Это была <strong>${noteLabel(correct, this.target.octave)}</strong>, а не ${noteNameRu(chosen)}.`;
     }
 
-    this.identifyFeedback.classList.remove('hidden');
-  }
-
-  // ═══════════════════════════════════════════
-  // Режим 3: Чтение нот
-  // ═══════════════════════════════════════════
-
-  newStaffRound() {
-    let entry, key;
-    do {
-      entry = this.staffRange[Math.floor(Math.random() * this.staffRange.length)];
-      key = `${entry.note}${entry.octave}`;
-    } while (key === this.staffPrevKey);
-    this.staffPrevKey = key;
-    this.staffTarget = { note: entry.note, octave: entry.octave };
-    this.staffAnswered = false;
-
-    // Reset buttons
-    this.staffNoteGrid.querySelectorAll('.note-btn').forEach(btn => {
-      btn.classList.remove('correct', 'wrong', 'reveal');
-      btn.disabled = false;
-    });
-
-    this.staffFeedback.classList.add('hidden');
-
-    // Draw on canvas
-    this.staffRenderer.resize();
-    this.staffRenderer.draw(entry.note, entry.octave);
-  }
-
-  checkStaffAnswer(btn) {
-    this.staffAnswered = true;
-    const chosen = btn.dataset.note;
-    const correct = this.staffTarget.note;
-    const isCorrect = chosen === correct;
-
-    this.staffNoteGrid.querySelectorAll('.note-btn').forEach(b => b.disabled = true);
-
-    if (isCorrect) {
-      btn.classList.add('correct');
-      this.staffStreak++;
-      this.staffStreakEl.textContent = this.staffStreak;
-
-      this.staffFeedbackIcon.textContent = '🎉';
-      this.staffFeedbackText.innerHTML = `<strong>Верно!</strong> Это ${noteLabel(correct, this.staffTarget.octave)}.`;
-    } else {
-      btn.classList.add('wrong');
-      this.staffStreak = 0;
-      this.staffStreakEl.textContent = '0';
-
-      this.staffNoteGrid.querySelectorAll('.note-btn').forEach(b => {
-        if (b.dataset.note === correct) b.classList.add('reveal');
-      });
-
-      this.staffFeedbackIcon.textContent = '😕';
-      this.staffFeedbackText.innerHTML = `Это была <strong>${noteLabel(correct, this.staffTarget.octave)}</strong>, а не ${noteNameRu(chosen)}.`;
-    }
-
-    this.staffFeedback.classList.remove('hidden');
+    this.feedback.classList.remove('hidden');
   }
 }
 
